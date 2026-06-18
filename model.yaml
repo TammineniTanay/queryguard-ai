@@ -1,0 +1,83 @@
+tables:
+  customers:
+    description: "Customer accounts and profile information"
+    primary_key: customer_id
+    columns:
+      customer_id: { type: INTEGER, sensitive: false }
+      name:        { type: TEXT,    sensitive: false }
+      email:       { type: TEXT,    sensitive: true }   # PII - BLOCKED
+      state:       { type: TEXT,    sensitive: false }
+      signup_date: { type: TEXT,    sensitive: false }
+
+  products:
+    description: "Product catalog with pricing and categories"
+    primary_key: product_id
+    columns:
+      product_id: { type: INTEGER, sensitive: false }
+      name:       { type: TEXT,    sensitive: false }
+      category:   { type: TEXT,    sensitive: false }
+      price:      { type: REAL,    sensitive: false }
+
+  orders:
+    description: "Customer purchase orders"
+    primary_key: order_id
+    columns:
+      order_id:   { type: INTEGER, sensitive: false }
+      customer_id:{ type: INTEGER, sensitive: false }
+      product_id: { type: INTEGER, sensitive: false }
+      amount:     { type: REAL,    sensitive: false }
+      order_date: { type: TEXT,    sensitive: false }
+      status:     { type: TEXT,    sensitive: false }
+
+  reviews:
+    description: "Product reviews and ratings left by customers"
+    primary_key: review_id
+    columns:
+      review_id:   { type: INTEGER, sensitive: false }
+      product_id:  { type: INTEGER, sensitive: false }
+      customer_id: { type: INTEGER, sensitive: false }
+      rating:      { type: INTEGER, sensitive: false }
+      comment:     { type: TEXT,    sensitive: false }
+      review_date: { type: TEXT,    sensitive: false }
+
+joins:
+  - left_table: orders
+    left_key: customer_id
+    right_table: customers
+    right_key: customer_id
+    relationship: many_to_one
+
+  - left_table: orders
+    left_key: product_id
+    right_table: products
+    right_key: product_id
+    relationship: many_to_one
+
+  - left_table: reviews
+    left_key: product_id
+    right_table: products
+    right_key: product_id
+    relationship: many_to_one
+
+  - left_table: reviews
+    left_key: customer_id
+    right_table: customers
+    right_key: customer_id
+    relationship: many_to_one
+
+metrics:
+  total_revenue:
+    expression: "SUM(orders.amount)"
+    description: "Total revenue from all orders"
+
+  avg_order_value:
+    expression: "AVG(orders.amount)"
+    description: "Average order value"
+
+  avg_rating:
+    expression: "AVG(reviews.rating)"
+    description: "Average product rating"
+
+  order_count:
+    expression: "COUNT(orders.order_id)"
+    description: "Number of orders"
