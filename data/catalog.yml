@@ -1,0 +1,155 @@
+version: 1
+warehouse: bigquery
+project: demo_project
+dataset: healthcare_ops
+
+roles:
+  executive:
+    description: Can view aggregated business metrics only.
+    deny_tags: [phi, pii]
+    mask_tags: []
+    row_filters: []
+  finance_analyst:
+    description: Can view claim and department financial metrics, not PHI.
+    deny_tags: [phi]
+    mask_tags: [pii]
+    row_filters: []
+  clinical_analyst:
+    description: Can view clinical aggregates with masked PII.
+    deny_tags: []
+    mask_tags: [pii]
+    row_filters:
+      - "p.region IN ('South', 'East', 'West', 'North')"
+
+tables:
+  patients:
+    fqdn: demo_project.healthcare_ops.patients
+    alias: p
+    description: Patient master table.
+    columns:
+      patient_id:
+        type: string
+        tags: [join_key]
+        description: Internal patient identifier.
+      patient_name:
+        type: string
+        tags: [phi]
+        description: Patient full name.
+      email:
+        type: string
+        tags: [pii]
+        description: Patient email.
+      region:
+        type: string
+        tags: []
+        description: Patient region.
+      birth_year:
+        type: integer
+        tags: [phi]
+        description: Patient birth year.
+  claims:
+    fqdn: demo_project.healthcare_ops.claims
+    alias: c
+    description: Insurance claim facts.
+    columns:
+      claim_id:
+        type: string
+        tags: [join_key]
+        description: Claim identifier.
+      patient_id:
+        type: string
+        tags: [join_key]
+        description: Patient identifier.
+      department_id:
+        type: string
+        tags: [join_key]
+        description: Department identifier.
+      diagnosis_code:
+        type: string
+        tags: [phi]
+        description: Diagnosis code.
+      claim_amount:
+        type: numeric
+        tags: [metric]
+        description: Claim amount in USD.
+      status:
+        type: string
+        tags: []
+        description: Claim status such as approved or denied.
+      claim_date:
+        type: date
+        tags: []
+        description: Date of claim.
+  departments:
+    fqdn: demo_project.healthcare_ops.departments
+    alias: d
+    description: Department lookup table.
+    columns:
+      department_id:
+        type: string
+        tags: [join_key]
+        description: Department identifier.
+      department_name:
+        type: string
+        tags: []
+        description: Department name.
+      cost_center:
+        type: string
+        tags: [confidential]
+        description: Internal cost center.
+      director:
+        type: string
+        tags: [pii]
+        description: Department director.
+
+joins:
+  - left_table: claims
+    left_column: patient_id
+    right_table: patients
+    right_column: patient_id
+    relationship: many_to_one
+  - left_table: claims
+    left_column: department_id
+    right_table: departments
+    right_column: department_id
+    relationship: many_to_one
+
+metrics:
+  total_claim_amount:
+    expression: SUM(c.claim_amount)
+    description: Sum of claim amount.
+    tables: [claims]
+  average_claim_amount:
+    expression: AVG(c.claim_amount)
+    description: Average claim amount.
+    tables: [claims]
+  claim_count:
+    expression: COUNT(c.claim_id)
+    description: Count of claims.
+    tables: [claims]
+  denied_claim_count:
+    expression: SUM(CASE WHEN LOWER(c.status) = 'denied' THEN 1 ELSE 0 END)
+    description: Count of denied claims.
+    tables: [claims]
+
+dimensions:
+  department:
+    expression: d.department_name
+    tables: [departments]
+    tags: []
+  region:
+    expression: p.region
+    tables: [patients]
+    tags: []
+  diagnosis:
+    expression: c.diagnosis_code
+    tables: [claims]
+    tags: [phi]
+  status:
+    expression: c.status
+    tables: [claims]
+    tags: []
+  patient_email:
+    expression: p.email
+    tables: [patients]
+    tags: [pii]
