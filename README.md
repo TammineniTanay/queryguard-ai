@@ -73,4 +73,4 @@ python eval/eval_runner.py
 ## Team
 
 - **Tanay Tammineni** — AI pipeline, LangGraph, hallucination prevention, SQL guardrails
-- **[Teammate]** — Data layer, schema ingestion, FastAPI, access control
+- **Sai Charan** — Data layer, schema ingestion, FastAPI, access control
