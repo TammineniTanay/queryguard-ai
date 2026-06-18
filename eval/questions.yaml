@@ -1,0 +1,31 @@
+- question: "What is the total revenue from all completed orders?"
+  expected_tables: [orders]
+  expected_sql_contains: ["SUM", "amount", "completed"]
+
+- question: "Which product category has the highest average order amount?"
+  expected_tables: [orders, products]
+  expected_sql_contains: ["AVG", "category", "GROUP BY"]
+
+- question: "How many orders were placed by customers in Texas?"
+  expected_tables: [orders, customers]
+  expected_sql_contains: ["TX", "COUNT"]
+
+- question: "What is the average rating for Electronics products?"
+  expected_tables: [reviews, products]
+  expected_sql_contains: ["AVG", "rating", "Electronics"]
+
+- question: "Which customer state has the most orders?"
+  expected_tables: [orders, customers]
+  expected_sql_contains: ["COUNT", "state", "GROUP BY"]
+
+- question: "What are the top 5 most reviewed products?"
+  expected_tables: [reviews, products]
+  expected_sql_contains: ["COUNT", "GROUP BY", "LIMIT 5"]
+
+- question: "What is the total revenue by product category?"
+  expected_tables: [orders, products]
+  expected_sql_contains: ["SUM", "category", "GROUP BY"]
+
+- question: "How many cancelled orders are there?"
+  expected_tables: [orders]
+  expected_sql_contains: ["COUNT", "cancelled"]
