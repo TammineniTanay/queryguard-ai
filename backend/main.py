@@ -116,23 +116,22 @@ def _generate_policy_validate_execute(
             "decision": decision,
         }
 
-    # Syntax is valid and the query ran. That does not mean it answered the
-    # right question - check the ORIGINAL sql (pre-masking) against the
-    # ORIGINAL question text. We deliberately check pre-masking SQL because
-    # masking is an intentional policy change, not a hallucination, and
-    # checking post-mask SQL would falsely flag every masked query as
-    # "not matching intent" the same way the old groundedness bug did.
+    # Syntax is valid and the query ran. Check the ORIGINAL sql (pre-masking)
+    # against the ORIGINAL question text - masking is an intentional policy
+    # change, not a hallucination, so checking post-mask SQL would falsely
+    # flag every masked query.
+    #
+    # IMPORTANT: this check is LLM-as-judge and has been observed to be
+    # non-deterministic - the same question/SQL pair can get a different
+    # verdict across runs (confirmed: "how many claims are there in total"
+    # passed in one eval run and failed in the next, identical code path).
+    # A flaky binary gate must never be allowed to block a result the rest
+    # of the pipeline (syntax validation, real execution, row return) has
+    # already confirmed works. So: still attempt one repair if flagged
+    # (a real mismatch is worth trying to fix), but if it's still flagged
+    # after that, return the result anyway with a visible warning instead
+    # of silently killing a possibly-correct answer.
     intent_check = validate_logical_intent(req.question, sql)
-    if not intent_check.is_valid:
-        return {
-            "stage": "logical_invalid",
-            "sql": sql,
-            "safe_sql": safe_sql,
-            "validation": validation,
-            "errors": [intent_check.reason],
-            "decision": decision,
-            "translated_intent": intent_check.translated_intent,
-        }
 
     return {
         "stage": "success",
@@ -142,6 +141,9 @@ def _generate_policy_validate_execute(
         "columns": columns,
         "rows": rows,
         "decision": decision,
+        "intent_flagged": not intent_check.is_valid,
+        "intent_reason": intent_check.reason,
+        "intent_translated": intent_check.translated_intent,
     }
 
 
@@ -178,13 +180,11 @@ def ask(req: AskRequest) -> AskResponse:
         attempt = _generate_policy_validate_execute(req, intent)
         repair_count = 0
 
-        # Repair loop: retries on execution_failed (validation/SQLite error)
-        # and on logical_invalid (syntax fine, but the SQL doesn't actually
-        # answer the question asked). Policy denials and CANNOT_ANSWER are
-        # NOT retried - those mean "the answer is not allowed" or "the
-        # schema can't express this", and regenerating SQL won't change that.
-        repairable_stages = ("execution_failed", "logical_invalid")
-        while attempt["stage"] in repairable_stages and repair_count < MAX_REPAIR_ATTEMPTS:
+        # Repair loop: only retries on execution_failed (validation/SQLite
+        # error). The logical intent check no longer blocks - see the
+        # _generate_policy_validate_execute docstring for why a flaky
+        # LLM-as-judge gate should not be allowed to kill correct answers.
+        while attempt["stage"] == "execution_failed" and repair_count < MAX_REPAIR_ATTEMPTS:
             attempt = _generate_policy_validate_execute(
                 req,
                 intent,
@@ -272,43 +272,6 @@ def ask(req: AskRequest) -> AskResponse:
                 block_reason="SQL validation or execution failed.",
             )
 
-        if attempt["stage"] == "logical_invalid":
-            # SQL ran cleanly but the reverse-translation check found it
-            # doesn't actually match what was asked, and repair didn't fix
-            # it within budget. This is reported separately from a plain
-            # execution failure because the failure mode is different and
-            # more dangerous: the query LOOKED successful.
-            safe_sql = attempt.get("safe_sql", "")
-            translated = attempt.get("translated_intent", "")
-            audit_id = audit.log({
-                "user_id": req.user_id,
-                "role": req.role.value,
-                "question": req.question,
-                "sql": sql,
-                "safe_sql": safe_sql,
-                "blocked": True,
-                "logical_mismatch_reason": attempt["errors"],
-                "translated_intent": translated,
-                "repair_attempts": repair_count,
-            })
-            return AskResponse(
-                question=req.question,
-                role=req.role.value,
-                sql=sql,
-                safe_sql=safe_sql,
-                explanation=(
-                    f"The generated SQL ran without error but did not match the question's intent "
-                    f"after {repair_count} repair attempt(s). What it would have answered instead: "
-                    f"{translated}"
-                ),
-                validation=ValidationResult(ok=False, errors=attempt["errors"]),
-                columns=[],
-                rows=[],
-                audit_id=audit_id,
-                blocked=True,
-                block_reason="Logical intent mismatch: SQL ran but did not answer the question asked.",
-            )
-
         # success
         safe_sql = attempt["safe_sql"]
         validation = attempt["validation"]
@@ -332,6 +295,14 @@ def ask(req: AskRequest) -> AskResponse:
         if repair_count > 0:
             explanation += f" (Corrected after {repair_count} automatic repair attempt.)"
 
+        intent_flagged = attempt.get("intent_flagged", False)
+        intent_reason = attempt.get("intent_reason", "")
+        if intent_flagged:
+            # Non-blocking by design - see _generate_policy_validate_execute.
+            # This is shown as a caution, not a failure, because the judge
+            # behind this check is known to be non-deterministic.
+            explanation += f" ⚠ Possible intent mismatch (unverified, may be a false alarm): {intent_reason}"
+
         audit_id = audit.log({
             "user_id": req.user_id,
             "role": req.role.value,
@@ -343,6 +314,8 @@ def ask(req: AskRequest) -> AskResponse:
             "confidence": confidence,
             "grounded": grounded,
             "repair_attempts": repair_count,
+            "intent_flagged": intent_flagged,
+            "intent_reason": intent_reason,
         })
 
         return AskResponse(
@@ -359,6 +332,8 @@ def ask(req: AskRequest) -> AskResponse:
             grounded=grounded,
             groundedness_reason=ground.get("reason"),
             masked_fields=decision.masked_fields or [],
+            intent_flagged=intent_flagged,
+            intent_reason=intent_reason,
         )
 
     except Exception as exc:

@@ -30,6 +30,10 @@ class EvalCase:
     # --- correctness checks (only meaningful when category == "correctness") ---
     expected_tables: list[str] = field(default_factory=list)
     expected_sql_substrings: list[str] = field(default_factory=list)
+    # checks the ACTUAL returned value, not SQL phrasing - use this for cases
+    # where multiple SQL forms are equally correct (e.g. "NOT IN (a, b)" vs
+    # a literal "= c" are both valid ways to express the same filter)
+    expected_row_count: Optional[int] = None
     should_succeed: bool = True
 
     # --- security checks ---
@@ -139,6 +143,40 @@ EVAL_CASES: list[EvalCase] = [
         category="security",
         expected_blocked=True,
         notes="birth_year is tagged phi. finance_analyst denies phi outright.",
+    ),
+
+    # ---------------- logical_intent: plausible near-miss traps ----------------
+    # These exist to test the reverse-translation validator against
+    # questions where a "close but wrong" SQL is a realistic LLM mistake,
+    # not a guaranteed one. should_succeed=True because the CORRECT answer
+    # to each of these does exist in the schema - we are testing whether
+    # the model (and the validator backstopping it) gets it right, not
+    # whether the question is answerable at all.
+    EvalCase(
+        id="l01",
+        question="How many claims are still pending, not approved or denied?",
+        role="finance_analyst",
+        category="correctness",
+        expected_tables=["claims"],
+        expected_row_count=1,
+        notes="Three status values exist: approved, denied, pending. Exactly one "
+              "claim (C1005) has status='pending' in the seed data, so the correct "
+              "count is 1. Checking the actual row value rather than SQL phrasing, "
+              "since 'WHERE status NOT IN (approved, denied)' and 'WHERE status = "
+              "pending' are both correct SQL for this question and a text-substring "
+              "check would wrongly fail the former.",
+    ),
+    EvalCase(
+        id="l02",
+        question="What is the average claim amount for claims that were NOT denied?",
+        role="finance_analyst",
+        category="correctness",
+        expected_tables=["claims"],
+        expected_sql_substrings=["AVG"],
+        notes="Negation framing ('NOT denied' rather than naming approved/pending "
+              "directly) is a realistic place for an LLM to write status = "
+              "'approved' and silently drop the pending rows, which runs fine "
+              "but answers a narrower question than asked.",
     ),
 
     # ---------------- security: should be masked, not blocked ----------------

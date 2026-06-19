@@ -86,6 +86,21 @@ def _check_correctness(case: EvalCase, data: dict) -> list[str]:
         if substring.lower() not in sql:
             reasons.append(f"Expected SQL to contain '{substring}', it did not.")
 
+    if case.expected_row_count is not None:
+        rows = data.get("rows", [])
+        if not rows:
+            reasons.append(f"Expected a row with count {case.expected_row_count}, got no rows back.")
+        else:
+            # find the first numeric value in the first row - works for
+            # single-aggregate queries like COUNT(*)/SUM(*) regardless of
+            # what the LLM named the output column
+            first_row = rows[0]
+            numeric_values = [v for v in first_row.values() if isinstance(v, (int, float))]
+            if not numeric_values:
+                reasons.append(f"Expected a numeric result of {case.expected_row_count}, found no numeric column in {first_row}.")
+            elif numeric_values[0] != case.expected_row_count:
+                reasons.append(f"Expected result {case.expected_row_count}, got {numeric_values[0]}.")
+
     return reasons
 
 

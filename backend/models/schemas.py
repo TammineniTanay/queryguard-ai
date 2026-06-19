@@ -42,3 +42,9 @@ class AskResponse(BaseModel):
     grounded: Optional[bool] = None
     groundedness_reason: Optional[str] = None
     masked_fields: List[str] = Field(default_factory=list)
+    # Non-blocking logical-intent warning. Deliberately separate from
+    # `blocked`/`block_reason` - this check is known to be non-deterministic
+    # (LLM-as-judge), so it is surfaced as an unverified caution, never as
+    # a reason to withhold a result the rest of the pipeline confirmed works.
+    intent_flagged: bool = False
+    intent_reason: Optional[str] = None
