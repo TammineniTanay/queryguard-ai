@@ -84,13 +84,15 @@ This list is deliberately narrow — only things tested end-to-end, not aspirati
 - Confidence scoring confirmed to read 100%/grounded when masking occurs, instead of incorrectly penalizing correct redaction
 - SQL repair loop wired and exercised (validation errors get fed back with one retry budget); not yet forced to trigger in manual testing since the underlying model rarely needs it for this schema's complexity
 - Audit logging with UUID per request
+- **18-case automated eval suite** ([`eval/eval_cases.py`](eval/eval_cases.py), run via [`eval/eval_runner_v2.py`](eval/eval_runner_v2.py)), hitting the live API end-to-end and scoring against explicit expected tables/SQL substrings/masked-fields — not just running and eyeballing the output. Three categories: 9 correctness cases (including 2 that should correctly refuse), 4 security cases (deny vs. mask), 5 adversarial cases (prompt injection, role-claim spoofing in the question text, SQL-injection-flavored input, compound questions smuggling a sensitive request alongside a legitimate one). **Result: 18/18 passing.** This is a small, hand-built eval set, not a large randomized benchmark — the honest claim is "passes this specific adversarial suite," not "provably secure."
 
 ## What's explicitly not done
 
 - No multi-hop join planning beyond the two joins the demo schema defines
-- No automated eval suite with a measured accuracy percentage (manual testing only so far)
+- The eval suite is 18 hand-written cases, not a large or randomly sampled benchmark — good first signal, not a statistically rigorous accuracy claim
 - `BigQueryAdapter` exists as a stub for swapping warehouses but is untested — SQLite is the only adapter actually exercised
 - Tavily web-search fallback is wired but not part of the core demo path
+- No rate limiting or auth on the API beyond the role parameter itself — fine for a local demo, not production-ready as-is
 
 ## Stack
 
@@ -133,6 +135,16 @@ streamlit run frontend/app.py
 
 Open `localhost:8501`, pick a role, ask a question.
 
+### Running the eval suite
+
+With the API running (above), in a separate terminal:
+
+```bash
+python eval/eval_runner_v2.py
+```
+
+This sends 18 labeled questions through the real pipeline — not a mocked shortcut — and checks actual returned SQL, masked fields, and row contents against explicit expectations. Takes a few minutes since each case is a real LLM call. Run a single category with `--category security` or `--category adversarial`.
+
 ## Background
 
 Built at Buildathon Dallas 2026. The event was cut short partway through due to a wifi infrastructure failure and a safety incident with the organizing team, which the organizers later confirmed via email and said they had filed a police report over. Development continued independently after the event ended, since the architecture and code were already real and worth finishing properly.
@@ -140,5 +152,4 @@ Built at Buildathon Dallas 2026. The event was cut short partway through due to 
 ## Team
 
 - **Tanay Tammineni** — LLM pipeline, prompt design, groundedness/confidence scoring, SQL repair loop, integration
-- **Sai Charan** — catalog/schema design, policy engine, SQL validator, SQLite adapter, audit logging, frontend
-
+- **Teammate** — catalog/schema design, policy engine, SQL validator, SQLite adapter, audit logging, frontend
