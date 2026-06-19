@@ -42,6 +42,37 @@ if st.button("Ask", type="primary"):
         st.error(data.get("block_reason") or "Blocked by guardrails")
     else:
         st.success(data["explanation"])
+
+        # confidence / groundedness badge - this is the hallucination
+        # prevention story made visible, not just logged
+        confidence = data.get("confidence")
+        grounded = data.get("grounded")
+        masked = data.get("masked_fields") or []
+
+        badge_col1, badge_col2, badge_col3 = st.columns(3)
+        with badge_col1:
+            if confidence is not None:
+                pct = f"{confidence:.0%}"
+                if confidence >= 0.8:
+                    st.metric("Confidence", pct, delta="grounded" if grounded else None)
+                elif confidence >= 0.5:
+                    st.metric("Confidence", pct, delta="check result", delta_color="off")
+                else:
+                    st.metric("Confidence", pct, delta="low confidence", delta_color="inverse")
+        with badge_col2:
+            st.metric("Rows returned", len(data.get("rows", [])))
+        with badge_col3:
+            if masked:
+                st.metric("Masked fields", len(masked))
+
+        if confidence is not None and confidence < 0.6:
+            st.warning(
+                f"⚠️ Low confidence answer: {data.get('groundedness_reason', 'Results may not fully answer the question.')}"
+            )
+
+        if masked:
+            st.info(f"🔒 Masked for your role: {', '.join(masked)}")
+
         rows = data.get("rows", [])
         if rows:
             st.dataframe(pd.DataFrame(rows), use_container_width=True)
@@ -61,14 +92,17 @@ if st.button("Ask", type="primary"):
             "validation": data.get("validation"),
             "audit_id": data.get("audit_id"),
             "role": data.get("role"),
+            "confidence": data.get("confidence"),
+            "grounded": data.get("grounded"),
         })
 
 st.divider()
 st.markdown("""
 ### Demo story
 This MVP shows how the system prevents hallucinations and protects sensitive data:
-1. The assistant only uses approved catalog metrics, dimensions, tables, and joins.
-2. The SQL validator blocks unsafe or unapproved queries before execution.
-3. The policy layer masks or blocks PHI/PII based on role.
-4. The audit log records every question and SQL decision.
+1. The LLM writes SQL freely from the question and schema, with no awareness of permissions.
+2. The policy layer masks or blocks PHI/PII columns based on role, independent of the LLM.
+3. The SQL validator blocks unsafe or unapproved structure before anything executes.
+4. A groundedness check verifies the result actually answers the question, and surfaces a confidence score instead of asserting an answer.
+5. The audit log records every question, decision, and confidence score.
 """)

@@ -39,7 +39,10 @@ Rules:
 - Never write DELETE, UPDATE, INSERT, DROP, ALTER, or TRUNCATE
 - Always include LIMIT {limit}
 - Use table aliases exactly as defined (e.g. claims = c, patients = p, departments = d)
-- If you cannot answer with the given schema, write exactly: CANNOT_ANSWER
+- Write SQL for exactly what is asked, even if it touches sensitive fields like email or diagnosis.
+  A separate access-control layer downstream will mask or block sensitive fields based on the
+  user's role. Your job is only to translate the question into correct SQL, not to enforce permissions.
+- If the question truly cannot be expressed with the tables/columns listed below, write exactly: CANNOT_ANSWER
 - Return only the SQL query, no explanation, no markdown fences
 
 Schema:
@@ -84,7 +87,7 @@ Available dimensions (use these expressions):
     def _describe_metrics(self) -> str:
         lines = []
         for name, meta in self.catalog.metrics.items():
-            lines.append(f"  {name}: {meta['expression']} - {meta['description']}")
+            lines.append(f"  {name}: {meta['expression']} — {meta['description']}")
         return "\n".join(lines)
 
     def _describe_dimensions(self) -> str:

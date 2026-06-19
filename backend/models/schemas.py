@@ -36,3 +36,9 @@ class AskResponse(BaseModel):
     audit_id: str
     blocked: bool = False
     block_reason: Optional[str] = None
+    # groundedness fields - surfaced separately from explanation so the
+    # frontend can render a confidence badge instead of parsing prose
+    confidence: Optional[float] = None
+    grounded: Optional[bool] = None
+    groundedness_reason: Optional[str] = None
+    masked_fields: List[str] = Field(default_factory=list)

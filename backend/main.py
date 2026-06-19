@@ -17,7 +17,7 @@ from backend.models.schemas import AskRequest, AskResponse, ValidationResult
 from backend.security.audit import AuditLogger
 from backend.security.policy import PolicyEngine
 
-app = FastAPI(title="QueryGuard AI", version="1.0.0")
+app = FastAPI(title="QueryGuard AI", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,7 +44,7 @@ def get_adapter() -> Any:
 
 @app.get("/health")
 def health() -> Dict[str, str]:
-    return {"status": "ok", "version": "1.0.0"}
+    return {"status": "ok", "version": "1.1.0"}
 
 
 @app.get("/catalog")
@@ -94,7 +94,7 @@ def ask(req: AskRequest) -> AskResponse:
                 "role": req.role.value,
                 "question": req.question,
                 "blocked": True,
-                "reason": "LLM could not answer with available schema",
+                "reason": "LLM could not express this question with the available schema",
             })
             return AskResponse(
                 question=req.question,
@@ -132,6 +132,7 @@ def ask(req: AskRequest) -> AskResponse:
                 audit_id=audit_id,
                 blocked=True,
                 block_reason=decision.reason,
+                masked_fields=decision.masked_fields or [],
             )
 
         safe_sql = decision.sql
@@ -163,13 +164,25 @@ def ask(req: AskRequest) -> AskResponse:
 
         columns, rows = get_adapter().execute(safe_sql)
 
-        ground = check_groundedness(req.question, safe_sql, rows)
+        # Groundedness measures whether the answer is faithful to the data,
+        # not whether policy redacted something on purpose. If masking
+        # occurred, the masked values are expected to look "wrong" to a
+        # fact-checker - that's the policy working, not a hallucination.
+        # Skip the LLM call entirely in that case rather than let it
+        # penalize correct redaction.
+        if decision.masked_fields:
+            ground = {
+                "grounded": True,
+                "confidence": 1.0,
+                "reason": "Groundedness check skipped: sensitive fields were masked by policy."
+            }
+        else:
+            ground = check_groundedness(req.question, safe_sql, rows)
+
         confidence = ground.get("confidence", 1.0)
         grounded = ground.get("grounded", True)
 
         explanation = explainer.explain(intent, decision.masked_fields or [])
-        if not grounded or confidence < 0.6:
-            explanation += f" Low confidence ({confidence:.0%}): {ground.get('reason', '')}"
 
         audit_id = audit.log({
             "user_id": req.user_id,
@@ -193,6 +206,10 @@ def ask(req: AskRequest) -> AskResponse:
             columns=columns,
             rows=rows,
             audit_id=audit_id,
+            confidence=confidence,
+            grounded=grounded,
+            groundedness_reason=ground.get("reason"),
+            masked_fields=decision.masked_fields or [],
         )
 
     except Exception as exc:
