@@ -140,4 +140,5 @@ Built at Buildathon Dallas 2026. The event was cut short partway through due to 
 ## Team
 
 - **Tanay Tammineni** — LLM pipeline, prompt design, groundedness/confidence scoring, SQL repair loop, integration
-- **Teammate** — catalog/schema design, policy engine, SQL validator, SQLite adapter, audit logging, frontend
+- **Sai Charan** — catalog/schema design, policy engine, SQL validator, SQLite adapter, audit logging, frontend
+
