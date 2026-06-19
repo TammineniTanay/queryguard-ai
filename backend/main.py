@@ -10,6 +10,7 @@ from backend.adapters.sqlite_adapter import SQLiteAdapter
 from backend.core.catalog import Catalog
 from backend.core.explainer import Explainer
 from backend.core.groundedness import check_groundedness
+from backend.core.logical_intent import validate_logical_intent
 from backend.core.nl_router import NlRouter, QueryIntent
 from backend.core.sql_generator import SqlGenerator
 from backend.core.sql_validator import SqlValidator
@@ -115,6 +116,24 @@ def _generate_policy_validate_execute(
             "decision": decision,
         }
 
+    # Syntax is valid and the query ran. That does not mean it answered the
+    # right question - check the ORIGINAL sql (pre-masking) against the
+    # ORIGINAL question text. We deliberately check pre-masking SQL because
+    # masking is an intentional policy change, not a hallucination, and
+    # checking post-mask SQL would falsely flag every masked query as
+    # "not matching intent" the same way the old groundedness bug did.
+    intent_check = validate_logical_intent(req.question, sql)
+    if not intent_check.is_valid:
+        return {
+            "stage": "logical_invalid",
+            "sql": sql,
+            "safe_sql": safe_sql,
+            "validation": validation,
+            "errors": [intent_check.reason],
+            "decision": decision,
+            "translated_intent": intent_check.translated_intent,
+        }
+
     return {
         "stage": "success",
         "sql": sql,
@@ -159,11 +178,13 @@ def ask(req: AskRequest) -> AskResponse:
         attempt = _generate_policy_validate_execute(req, intent)
         repair_count = 0
 
-        # Repair loop: only retry on execution_failed (validation or SQLite
-        # error). Policy denials and CANNOT_ANSWER are not retried - those
-        # are not "the SQL was wrong", they are "the answer is not allowed"
-        # or "the schema can't express this", and retrying won't change that.
-        while attempt["stage"] == "execution_failed" and repair_count < MAX_REPAIR_ATTEMPTS:
+        # Repair loop: retries on execution_failed (validation/SQLite error)
+        # and on logical_invalid (syntax fine, but the SQL doesn't actually
+        # answer the question asked). Policy denials and CANNOT_ANSWER are
+        # NOT retried - those mean "the answer is not allowed" or "the
+        # schema can't express this", and regenerating SQL won't change that.
+        repairable_stages = ("execution_failed", "logical_invalid")
+        while attempt["stage"] in repairable_stages and repair_count < MAX_REPAIR_ATTEMPTS:
             attempt = _generate_policy_validate_execute(
                 req,
                 intent,
@@ -249,6 +270,43 @@ def ask(req: AskRequest) -> AskResponse:
                 audit_id=audit_id,
                 blocked=True,
                 block_reason="SQL validation or execution failed.",
+            )
+
+        if attempt["stage"] == "logical_invalid":
+            # SQL ran cleanly but the reverse-translation check found it
+            # doesn't actually match what was asked, and repair didn't fix
+            # it within budget. This is reported separately from a plain
+            # execution failure because the failure mode is different and
+            # more dangerous: the query LOOKED successful.
+            safe_sql = attempt.get("safe_sql", "")
+            translated = attempt.get("translated_intent", "")
+            audit_id = audit.log({
+                "user_id": req.user_id,
+                "role": req.role.value,
+                "question": req.question,
+                "sql": sql,
+                "safe_sql": safe_sql,
+                "blocked": True,
+                "logical_mismatch_reason": attempt["errors"],
+                "translated_intent": translated,
+                "repair_attempts": repair_count,
+            })
+            return AskResponse(
+                question=req.question,
+                role=req.role.value,
+                sql=sql,
+                safe_sql=safe_sql,
+                explanation=(
+                    f"The generated SQL ran without error but did not match the question's intent "
+                    f"after {repair_count} repair attempt(s). What it would have answered instead: "
+                    f"{translated}"
+                ),
+                validation=ValidationResult(ok=False, errors=attempt["errors"]),
+                columns=[],
+                rows=[],
+                audit_id=audit_id,
+                blocked=True,
+                block_reason="Logical intent mismatch: SQL ran but did not answer the question asked.",
             )
 
         # success
