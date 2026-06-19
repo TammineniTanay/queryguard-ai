@@ -26,12 +26,56 @@ class SqlGenerator:
         if intent.blocked_reason:
             raise ValueError(intent.blocked_reason)
 
+        system_prompt = self._build_system_prompt(limit)
+        user_message = f"Question: {intent.raw_question}\n\nSQL:"
+
+        return self._call_llm(system_prompt, user_message)
+
+    def repair(self, intent: QueryIntent, failed_sql: str, errors: list[str], limit: int = 100) -> str:
+        """
+        Called when the first SQL attempt fails validation or execution.
+        Gives the LLM one chance to fix it with the exact error in context,
+        instead of the pipeline dead-ending on the first failure.
+        """
+        system_prompt = self._build_system_prompt(limit)
+        error_text = "\n".join(f"- {e}" for e in errors)
+
+        user_message = f"""Question: {intent.raw_question}
+
+Your previous SQL attempt failed:
+{failed_sql}
+
+Errors:
+{error_text}
+
+Write a corrected SQL query that fixes these errors. Follow all the same rules.
+If the question genuinely cannot be answered even after fixing the errors, write exactly: CANNOT_ANSWER
+
+SQL:"""
+
+        return self._call_llm(system_prompt, user_message)
+
+    def _call_llm(self, system_prompt: str, user_message: str) -> str:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message}
+            ],
+            temperature=0.0,
+            max_tokens=512
+        )
+        sql = response.choices[0].message.content.strip()
+        sql = re.sub(r"```sql|```", "", sql, flags=re.IGNORECASE).strip()
+        return sql
+
+    def _build_system_prompt(self, limit: int) -> str:
         schema_description = self.catalog.describe_for_prompt()
         join_info = self._describe_joins()
         metrics_info = self._describe_metrics()
         dimensions_info = self._describe_dimensions()
 
-        system_prompt = f"""You are a SQLite SQL expert. Generate accurate, safe SQL from a natural language question.
+        return f"""You are a SQLite SQL expert. Generate accurate, safe SQL from a natural language question.
 
 Rules:
 - Only use the tables, columns, metrics, and joins listed below
@@ -57,22 +101,6 @@ Available metrics (use these expressions):
 Available dimensions (use these expressions):
 {dimensions_info}"""
 
-        user_message = f"Question: {intent.raw_question}\n\nSQL:"
-
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.0,
-            max_tokens=512
-        )
-
-        sql = response.choices[0].message.content.strip()
-        sql = re.sub(r"```sql|```", "", sql, flags=re.IGNORECASE).strip()
-        return sql
-
     def _describe_joins(self) -> str:
         lines = []
         for j in self.catalog.joins:
@@ -87,7 +115,7 @@ Available dimensions (use these expressions):
     def _describe_metrics(self) -> str:
         lines = []
         for name, meta in self.catalog.metrics.items():
-            lines.append(f"  {name}: {meta['expression']} — {meta['description']}")
+            lines.append(f"  {name}: {meta['expression']} - {meta['description']}")
         return "\n".join(lines)
 
     def _describe_dimensions(self) -> str:
